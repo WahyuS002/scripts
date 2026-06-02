@@ -1,0 +1,47 @@
+# ============================================================
+#  DIAGNOSA JARINGAN - SISI CLIENT (DEMPO)  [versi loop]
+#  Tujuan : log latency Dempo -> server (172.29.0.2) tiap menit,
+#           bertanggal, untuk dicocokkan dgn jam karyawan ngeluh
+#           lag & pola tanggal 20+.
+#
+#  Versi ini BERJALAN TERUS (loop) setelah dijalankan sekali.
+#  Dipicu cukup SEKALI saat startup via Task Scheduler -> jauh
+#  lebih efisien daripada memanggil PowerShell tiap menit.
+#  Saat komputer mati, loop berhenti sendiri; saat nyala lagi,
+#  trigger "At startup" menjalankannya kembali.
+#
+#  Cara baca nanti (filter di Excel):
+#   - tampilkan hanya status=RTO atau latency_ms > 100
+#     => itu jam-jam gangguannya.
+#   - baris yang ABSEN (gap waktu) = komputer mati / toko tutup,
+#     BUKAN gangguan jaringan. Jangan disalahartikan sbg RTO.
+# ============================================================
+
+$ServerIP    = "172.29.0.2"
+$IntervalSec = 60                      # 1 menit
+$LogDir      = "C:\ProgramData\NetDiag"
+$LogFile     = Join-Path $LogDir "pinglog-dempo.csv"
+
+if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
+if (-not (Test-Path $LogFile)) {
+    "timestamp,target,status,latency_ms" | Out-File -FilePath $LogFile -Encoding utf8
+}
+
+# Tandai setiap kali script (re)start, biar ketahuan kapan komputer
+# baru dinyalakan -- berguna membedakan "toko tutup" vs "gangguan".
+$boot = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+"$boot,$ServerIP,START,NA" | Out-File -FilePath $LogFile -Append -Encoding utf8
+
+while ($true) {
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    try {
+        $r = Test-Connection -ComputerName $ServerIP -Count 1 -ErrorAction Stop
+        $lat = $r.ResponseTime
+        if ($null -eq $lat) { $lat = $r.Latency }   # fallback PowerShell 7+
+        "$ts,$ServerIP,OK,$lat" | Out-File -FilePath $LogFile -Append -Encoding utf8
+    }
+    catch {
+        "$ts,$ServerIP,RTO,NA" | Out-File -FilePath $LogFile -Append -Encoding utf8
+    }
+    Start-Sleep -Seconds $IntervalSec
+}
