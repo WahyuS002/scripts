@@ -1,0 +1,56 @@
+# ============================================================
+#  DIAGNOSA JARINGAN - SISI SERVER (PAMELA)
+#  Tujuan : log UPLOAD/DOWNLOAD/PING server -> internet,
+#           bertanggal, untuk membuktikan throttle FUP
+#           di akhir bulan (tanggal 20+).
+#  Jalankan di KOMPUTER SERVER PAMELA (yg punya 172.29.0.2).
+#
+#  CATATAN: Output CSV Ookla pakai satuan BYTE, bukan bit.
+#  Script ini sudah otomatis mengubah ke Mbps biar gampang dibaca.
+# ============================================================
+
+# --- Lokasi speedtest.exe: taruh di folder yg sama dgn script ini ---
+$ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
+$SpeedExe   = Join-Path $ScriptDir "speedtest.exe"
+
+# --- Folder log: tersembunyi dari karyawan, tetap writable ---
+$LogDir  = "C:\ProgramData\NetDiag"
+$LogFile = Join-Path $LogDir "speedlog-pamela.csv"
+
+if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
+
+if (-not (Test-Path $SpeedExe)) {
+    Write-Host "[ERROR] speedtest.exe tidak ditemukan di $SpeedExe"
+    Write-Host "Download dari https://www.speedtest.net/apps/cli lalu taruh di folder ini."
+    exit 1
+}
+
+# --- Tulis header sekali, kalau file baru ---
+if (-not (Test-Path $LogFile)) {
+    "timestamp,ping_ms,jitter_ms,download_mbps,upload_mbps,packetloss_pct,result_url" |
+        Out-File -FilePath $LogFile -Encoding utf8
+}
+
+# --- Jalankan speedtest, output JSON (paling andal utk parsing) ---
+$raw = & $SpeedExe --format=json --accept-license --accept-gdpr 2>$null
+
+try {
+    $j = $raw | ConvertFrom-Json
+
+    # Ookla JSON: bandwidth dalam BYTE/detik. Mbps = byte*8/1e6
+    $dlMbps = [math]::Round(($j.download.bandwidth * 8 / 1000000), 2)
+    $ulMbps = [math]::Round(($j.upload.bandwidth   * 8 / 1000000), 2)
+    $ping   = [math]::Round($j.ping.latency, 2)
+    $jit    = [math]::Round($j.ping.jitter, 2)
+    $loss   = if ($null -ne $j.packetLoss) { $j.packetLoss } else { "NA" }
+    $url    = $j.result.url
+    $ts     = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+    "$ts,$ping,$jit,$dlMbps,$ulMbps,$loss,$url" |
+        Out-File -FilePath $LogFile -Append -Encoding utf8
+}
+catch {
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "$ts,ERROR,ERROR,ERROR,ERROR,ERROR,speedtest_failed" |
+        Out-File -FilePath $LogFile -Append -Encoding utf8
+}
